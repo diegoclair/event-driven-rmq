@@ -1,0 +1,23 @@
+version: '3.9'
+
+services:
+
+  rabbitmq:
+    container_name: event-driven-rabbitmq
+    image: rabbitmq:3.13.7-management-alpine
+    restart: unless-stopped
+    volumes:
+      - ./.docker/volumes/rabbitmq_data:/var/lib/rabbitmq
+      - ./.docker/volumes/rabbitmq_log:/var/log/rabbitmq
+    environment:
+      - RABBITMQ_DEFAULT_USER=diego
+      - RABBITMQ_DEFAULT_PASS=secret
+    ports:
+      - 5672:5672
+      - 15672:15672
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge      
