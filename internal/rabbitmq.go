@@ -103,3 +103,11 @@ func (r *RabbitMQClient) PublishDeferredConfirm(ctx context.Context, exchange, r
 func (r *RabbitMQClient) Consume(ctx context.Context, queueName, consumerName string, autoAck bool) (<-chan amqp.Delivery, error) {
 	return r.ch.ConsumeWithContext(ctx, queueName, consumerName, autoAck, false, false, false, nil)
 }
+
+// ApplyQoS applies the Quality of Service to the channel
+// prefetchCount is the number of messages that the server will try to keep on the network for consumers before receiving delivery acks
+// prefetchSize is the maximum amount of content (measured in octets) (how many bytes) that the server will deliver, 0 means unlimited
+// global if true the settings apply to the entire channel, if false it applies per consumer
+func (r *RabbitMQClient) ApplyQoS(prefetchCount, prefetchSize int, global bool) error {
+	return r.ch.Qos(prefetchCount, prefetchSize, global)
+}

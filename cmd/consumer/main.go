@@ -2,25 +2,21 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"time"
 
 	"github.com/diegoclair/event-driven-rmq/internal"
+	"github.com/rabbitmq/amqp091-go"
 	"golang.org/x/sync/errgroup"
 )
 
 func main() {
-	conn, err := internal.ConnectRabbitMQ("diego", "secret", "localhost:5672", "eventdriven")
-	if err != nil {
-		panic(err)
-	}
-	defer conn.Close()
-
-	client, err := internal.NewRabbitMQClient(conn)
-	if err != nil {
-		panic(err)
-	}
+	client := getClient()
 	defer client.Close()
+
+	publisherClient := getClient()
+	defer publisherClient.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -29,7 +25,49 @@ func main() {
 	// fanout example, messages will be sent to all consumers, if you have 10 messages and 2 consumers, each consumer will receive 10 messages
 
 	//topicExchangeExample(ctx, client)
-	fanoutExchangeExample(ctx, client)
+	//fanoutExchangeExample(ctx, client)
+	directExchangeExample(ctx, client, publisherClient)
+
+}
+
+func getClient() *internal.RabbitMQClient {
+	conn, err := internal.ConnectRabbitMQ("diego", "secret", "localhost:5672", "eventdriven")
+	if err != nil {
+		panic(err)
+	}
+
+	client, err := internal.NewRabbitMQClient(conn)
+	if err != nil {
+		panic(err)
+	}
+
+	return client
+}
+
+func directExchangeExample(ctx context.Context, client *internal.RabbitMQClient, publisherClient *internal.RabbitMQClient) {
+	queue, err := client.CreateQueue("", true, true)
+	if err != nil {
+		panic(err)
+	}
+
+	// create a fanout exchange
+	err = client.CreateExchange("d_customers_events", "fanout", true, false)
+	if err != nil {
+		panic(err)
+	}
+
+	//create a direct exchange
+	err = publisherClient.CreateExchange("customer_callbacks", "direct", true, false)
+	if err != nil {
+		panic(err)
+	}
+
+	err = publisherClient.BindQueueToExchange(queue.Name, "d_customers_events", "")
+	if err != nil {
+		panic(err)
+	}
+
+	startConsume(ctx, client, publisherClient, queue.Name, true)
 }
 
 func fanoutExchangeExample(ctx context.Context, client *internal.RabbitMQClient) {
@@ -40,25 +78,25 @@ func fanoutExchangeExample(ctx context.Context, client *internal.RabbitMQClient)
 	}
 
 	// create a fanout exchange
-	err = client.CreateExchange("f_costumers_events", "fanout", true, false)
+	err = client.CreateExchange("f_customers_events", "fanout", true, false)
 	if err != nil {
 		panic(err)
 	}
 
 	// as it is a fanout exchange, the routing key doesn't matter
-	err = client.BindQueueToExchange(queue.Name, "f_costumers_events", "")
+	err = client.BindQueueToExchange(queue.Name, "f_customers_events", "")
 	if err != nil {
 		panic(err)
 	}
 
-	startConsume(ctx, client, queue.Name)
+	startConsume(ctx, client, nil, queue.Name, false)
 }
 
 func topicExchangeExample(ctx context.Context, client *internal.RabbitMQClient) {
-	startConsume(ctx, client, "costumers")
+	startConsume(ctx, client, nil, "costumers", false)
 }
 
-func startConsume(ctx context.Context, client *internal.RabbitMQClient, queueName string) {
+func startConsume(ctx context.Context, client, publisherClient *internal.RabbitMQClient, queueName string, isDirectEx bool) {
 	var blockForever chan struct{}
 
 	consumerName := "email-service"
@@ -71,9 +109,13 @@ func startConsume(ctx context.Context, client *internal.RabbitMQClient, queueNam
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
+	err = client.ApplyQoS(10, 0, true)
+	if err != nil {
+		panic(err)
+	}
+
 	// errogroup allows to manage multiple goroutines
 	g, _ := errgroup.WithContext(ctx)
-	g.SetLimit(10)
 
 	go func() {
 		for message := range messageBus {
@@ -85,6 +127,20 @@ func startConsume(ctx context.Context, client *internal.RabbitMQClient, queueNam
 				err := msg.Ack(false)
 				if err != nil {
 					log.Printf("Error acknowledging msg: %v", err)
+					return err
+				}
+
+				if publisherClient != nil && isDirectEx {
+					fmt.Println("Publishing message to customer_callbacks")
+					err = publisherClient.Publish(ctx, "customer_callbacks", msg.ReplyTo, amqp091.Publishing{
+						ContentType:   "text/plain",
+						Body:          []byte("Email sent"),
+						DeliveryMode:  amqp091.Persistent,
+						CorrelationId: msg.CorrelationId,
+					})
+					if err != nil {
+						log.Printf("Error publishing message: %v", err)
+					}
 				}
 
 				log.Printf("Acknowledged msg %s", msg.MessageId)

@@ -9,6 +9,7 @@ services:
     volumes:
       - ./.docker/volumes/rabbitmq_data:/var/lib/rabbitmq
       - ./.docker/volumes/rabbitmq_log:/var/log/rabbitmq
+      - ./rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
     environment:
       - RABBITMQ_DEFAULT_USER=diego
       - RABBITMQ_DEFAULT_PASS=secret
